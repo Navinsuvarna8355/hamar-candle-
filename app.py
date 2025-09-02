@@ -3,8 +3,8 @@ import pandas as pd
 from nsetools import Nse
 
 # --- Setup ---
-st.set_page_config(page_title="Live Hammer Signal", layout="wide")
-st.title("📈 Live NSE Dashboard: Hammer Candle Strategy")
+st.set_page_config(page_title="Hammer Signal Dashboard", layout="wide")
+st.title("📊 Live NSE Dashboard: Hammer Candle Strategy")
 
 nse = Nse()
 symbol_map = {
@@ -36,7 +36,7 @@ if not data:
     st.stop()
 
 df = pd.DataFrame([data])
-st.subheader("🔍 Latest Candle")
+st.subheader("📌 Latest Candle")
 st.dataframe(df)
 
 # --- Strategy Logic ---
