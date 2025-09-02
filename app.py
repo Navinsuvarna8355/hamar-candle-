@@ -1,15 +1,46 @@
+import streamlit as st
+import pandas as pd
+from nsetools import Nse
+
+# --- Setup ---
+st.set_page_config(page_title="Live Hammer Signal", layout="wide")
+st.title("📈 Live NSE Dashboard: Hammer Candle Strategy")
+
+nse = Nse()
+symbol_map = {
+    "NIFTY": "NIFTY 50",
+    "BANKNIFTY": "NIFTY BANK",
+    "SENSEX": "S&P BSE SENSEX"
+}
+
+selected_index = st.selectbox("Choose Index", list(symbol_map.keys()))
+symbol = symbol_map[selected_index]
+
+# --- Fetch Live Data ---
+def fetch_live_data(symbol):
+    try:
+        quote = nse.get_index_quote(symbol)
+        return {
+            "open": float(quote["open"]),
+            "high": float(quote["dayHigh"]),
+            "low": float(quote["dayLow"]),
+            "close": float(quote["lastPrice"]),
+            "volume": float(quote["quantityTraded"])
+        }
+    except Exception as e:
+        st.error(f"Error fetching data: {e}")
+        return None
+
+data = fetch_live_data(symbol)
+if not data:
+    st.stop()
+
+df = pd.DataFrame([data])
+st.subheader("🔍 Latest Candle")
+st.dataframe(df)
+
+# --- Strategy Logic ---
 def detect_hammer_signal(latest, support, resistance):
-    """
-    Detects hammer candle and returns trading signal.
-
-    Parameters:
-    - latest: dict with keys 'open', 'high', 'low', 'close'
-    - support: float
-    - resistance: float
-
-    Returns:
-    - str: 'Buy CE', 'Buy PE', or 'Sideways'
-    """
     open_price = latest['open']
     high = latest['high']
     low = latest['low']
@@ -20,7 +51,6 @@ def detect_hammer_signal(latest, support, resistance):
     lower_wick = min(open_price, close) - low
     upper_wick = high - max(open_price, close)
 
-    # Avoid division by zero
     if candle_range == 0:
         return "Sideways"
 
@@ -28,14 +58,12 @@ def detect_hammer_signal(latest, support, resistance):
     upper_wick_ratio = upper_wick / candle_range
     body_ratio = body / candle_range
 
-    # Define hammer characteristics
     is_hammer = (
         lower_wick_ratio > 0.5 and
         upper_wick_ratio < 0.2 and
         body_ratio < 0.3
     )
 
-    # Signal logic
     if is_hammer and close >= support * 0.98:
         return "Buy CE"
     elif is_hammer and close <= resistance * 1.02:
@@ -43,18 +71,21 @@ def detect_hammer_signal(latest, support, resistance):
     else:
         return "Sideways"
 
+# --- Support/Resistance Logic ---
+def detect_support_resistance(df):
+    support = df['low'].min()
+    resistance = df['high'].max()
+    return support, resistance
 
-# 🔍 Sample usage
-if __name__ == "__main__":
-    latest_candle = {
-        'open': 19500,
-        'high': 19600,
-        'low': 19400,
-        'close': 19520
-    }
+support, resistance = detect_support_resistance(df)
+latest = df.iloc[-1]
+signal = detect_hammer_signal(latest, support, resistance)
 
-    support = 19450
-    resistance = 19650
+# --- Display Signal ---
+st.subheader("📍 Strategy Signal")
+st.markdown(f"### {signal}")
 
-    signal = detect_hammer_signal(latest_candle, support, resistance)
-    print("Signal:", signal)
+with st.expander("Support/Resistance Levels"):
+    st.write(f"Support: `{support:.2f}`")
+    st.write(f"Resistance: `{resistance:.2f}`")
+    st.write(f"Close Price: `{latest['close']:.2f}`")
