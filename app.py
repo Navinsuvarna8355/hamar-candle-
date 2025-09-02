@@ -1,76 +1,60 @@
-import streamlit as st
-from nsetools import Nse
-import pandas as pd
-import time
+def detect_hammer_signal(latest, support, resistance):
+    """
+    Detects hammer candle and returns trading signal.
 
-# --- Setup ---
-st.set_page_config(page_title="Live NSE Hammer Signal", layout="wide")
-st.title("📈 Live NSE Signal Dashboard")
+    Parameters:
+    - latest: dict with keys 'open', 'high', 'low', 'close'
+    - support: float
+    - resistance: float
 
-nse = Nse()
-symbol_map = {
-    "NIFTY": "NIFTY 50",
-    "BANKNIFTY": "NIFTY BANK",
-    "SENSEX": "S&P BSE SENSEX"
-}
+    Returns:
+    - str: 'Buy CE', 'Buy PE', or 'Sideways'
+    """
+    open_price = latest['open']
+    high = latest['high']
+    low = latest['low']
+    close = latest['close']
 
-selected_index = st.selectbox("Choose Index", list(symbol_map.keys()))
-symbol = symbol_map[selected_index]
+    body = abs(close - open_price)
+    candle_range = high - low
+    lower_wick = min(open_price, close) - low
+    upper_wick = high - max(open_price, close)
 
-# --- Fetch Live Data ---
-def fetch_live_data(symbol):
-    try:
-        quote = nse.get_index_quote(symbol)
-        return {
-            "open": float(quote["open"]),
-            "high": float(quote["dayHigh"]),
-            "low": float(quote["dayLow"]),
-            "close": float(quote["lastPrice"]),
-            "volume": float(quote["quantityTraded"])
-        }
-    except:
-        return None
+    # Avoid division by zero
+    if candle_range == 0:
+        return "Sideways"
 
-data = fetch_live_data(symbol)
-if not data:
-    st.error("Failed to fetch live data. Try again later.")
-    st.stop()
+    lower_wick_ratio = lower_wick / candle_range
+    upper_wick_ratio = upper_wick / candle_range
+    body_ratio = body / candle_range
 
-df = pd.DataFrame([data])
-st.subheader("🔍 Latest Candle")
-st.dataframe(df)
+    # Define hammer characteristics
+    is_hammer = (
+        lower_wick_ratio > 0.5 and
+        upper_wick_ratio < 0.2 and
+        body_ratio < 0.3
+    )
 
-# --- Strategy Logic ---
-def is_weak_hammer(candle):
-    body = abs(candle['close'] - candle['open'])
-    lower_wick = min(candle['open'], candle['close']) - candle['low']
-    upper_wick = candle['high'] - max(candle['open'], candle['close'])
-    return lower_wick > 2 * body and upper_wick < body
-
-def detect_support_resistance(df):
-    support = df['low'].min()
-    resistance = df['high'].max()
-    return support, resistance
-
-support, resistance = detect_support_resistance(df)
-latest = df.iloc[-1]
-
-if is_weak_hammer(latest):
-    if latest['close'] <= support * 1.02:
-        signal = "🟢 Buy CE"
-    elif latest['close'] >= resistance * 0.98:
-        signal = "🔴 Buy PE"
+    # Signal logic
+    if is_hammer and close >= support * 0.98:
+        return "Buy CE"
+    elif is_hammer and close <= resistance * 1.02:
+        return "Buy PE"
     else:
-        signal = "⚪ No Signal (Hammer not near zone)"
-else:
-    signal = "⚪ No Signal (Not a weak hammer)"
+        return "Sideways"
 
-# --- Display Signal ---
-st.subheader("📍 Strategy Signal")
-st.markdown(f"### {signal}")
 
-with st.expander("Support/Resistance Levels"):
-    st.write(f"Support: `{support:.2f}`")
-    st.write(f"Resistance: `{resistance:.2f}`")
-    st.write(f"Close Price: `{latest['close']:.2f}`")
+# 🔍 Sample usage
+if __name__ == "__main__":
+    latest_candle = {
+        'open': 19500,
+        'high': 19600,
+        'low': 19400,
+        'close': 19520
+    }
 
+    support = 19450
+    resistance = 19650
+
+    signal = detect_hammer_signal(latest_candle, support, resistance)
+    print("Signal:", signal)
