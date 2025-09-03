@@ -64,9 +64,9 @@ def detect_hammer_signal(latest, support, resistance):
         body_ratio < 0.3
     )
 
-    if is_hammer and close >= support * 0.98:
+    if is_hammer and close <= support * 1.02:
         return "Buy CE"
-    elif is_hammer and close <= resistance * 1.02:
+    elif is_hammer and close >= resistance * 0.98:
         return "Buy PE"
     else:
         return "Sideways"
