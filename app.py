@@ -14,22 +14,32 @@ SYMBOL_MAP = {
 
 @st.cache_data(ttl=60)
 def fetch_option_chain(symbol_key, current_time_key):
+    """
+    Fetches option chain data from NSE's official API.
+    Caches the data for 60 seconds to reduce API calls.
+    """
     symbol_name = SYMBOL_MAP.get(symbol_key)
     if not symbol_name:
         st.error("Invalid symbol selected.")
         return None
 
+    # NSE's API URL for option chain
     nse_oc_url = f"https://www.nseindia.com/api/option-chain-indices?symbol={symbol_name}"
+
+    # Headers to mimic a browser request
     headers = {
-        "User-Agent": "Mozilla/5.0",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
         "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive"
     }
+
     session = requests.Session()
     session.headers.update(headers)
     
     try:
         resp = session.get(nse_oc_url, timeout=5)
-        resp.raise_for_status()
+        resp.raise_for_status()  # Raise an HTTPError for bad responses (4xx or 5xx)
         data = resp.json()
         
         return {
@@ -43,29 +53,30 @@ def fetch_option_chain(symbol_key, current_time_key):
         return None
 
 def detect_decay(oc_data, underlying, decay_range=150):
-    atm_strikes = [d for d in oc_data if abs(d["strikePrice"] - underlying) <= decay_range and "CE" in d and "PE" in d]
+    """
+    Analyzes option chain data to detect theta decay bias.
+    """
+    # Filter for strikes near the underlying value (ATM range)
+    atm_strikes = [d for d in oc_data if abs(d.get("strikePrice", 0) - underlying) <= decay_range and "CE" in d and "PE" in d]
+    
     details = []
     for strike_data in atm_strikes:
-        ce_data = strike_data["CE"]
-        pe_data = strike_data["PE"]
-
+        ce_data = strike_data.get("CE", {})
+        pe_data = strike_data.get("PE", {})
+        
         ce_theta = ce_data.get("theta", 0)
         pe_theta = pe_data.get("theta", 0)
         ce_chg = ce_data.get("change", 0)
         pe_chg = pe_data.get("change", 0)
-
+        
         decay_side = "Both"
-        if ce_theta != 0 and pe_theta != 0:
-            if abs(ce_theta) > abs(pe_theta) and ce_chg < 0:
-                decay_side = "CE"
-            elif abs(pe_theta) > abs(ce_theta) and pe_chg < 0:
-                decay_side = "PE"
-        elif ce_chg < 0 and pe_chg < 0:
+        # Logic to determine the dominant decay side
+        if ce_chg < 0 and pe_chg < 0:
             if abs(ce_chg) > abs(pe_chg):
                 decay_side = "CE"
             elif abs(pe_chg) > abs(ce_chg):
                 decay_side = "PE"
-
+        
         details.append({
             "strikePrice": strike_data["strikePrice"],
             "CE_theta": ce_theta,
@@ -76,6 +87,7 @@ def detect_decay(oc_data, underlying, decay_range=150):
         })
     
     df = pd.DataFrame(details).sort_values(by="strikePrice")
+    
     ce_count = df[df['Decay_Side'] == 'CE'].shape[0]
     pe_count = df[df['Decay_Side'] == 'PE'].shape[0]
     
@@ -84,10 +96,13 @@ def detect_decay(oc_data, underlying, decay_range=150):
         overall_decay_side = "CE Decay Active"
     elif pe_count > ce_count:
         overall_decay_side = "PE Decay Active"
-
+    
     return overall_decay_side, df
 
 def create_decay_chart(df):
+    """
+    Generates a Plotly bar chart for theta values.
+    """
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=df['strikePrice'],
@@ -142,6 +157,7 @@ if auto_refresh and (current_time - st.session_state.last_fetch_time >= refresh_
         if data_dict:
             st.session_state.data_container = data_dict
             st.session_state.last_fetch_time = current_time
+            st.rerun()
 
 # --- Manual fetch ---
 if fetch_button or st.session_state.data_container is None or selected_symbol != st.session_state.selected_symbol:
@@ -151,6 +167,7 @@ if fetch_button or st.session_state.data_container is None or selected_symbol !=
         if data_dict:
             st.session_state.data_container = data_dict
             st.session_state.last_fetch_time = time.time()
+            st.rerun()
 
 # --- Left Column UI ---
 with col1:
@@ -172,6 +189,10 @@ with col1:
 with col2:
     st.header("Live Analysis")
     if st.session_state.data_container:
+        # Filter the DataFrame based on the selected expiry
+        filtered_oc_data = [d for d in st.session_state.data_container["records_data"] if d.get("expiryDate") == selected_expiry]
+        _, df = detect_decay(filtered_oc_data, st.session_state.data_container["underlying_value"])
+        
         tab1, tab2 = st.tabs(["Data Table", "Theta Chart"])
         with tab1:
             st.dataframe(df, use_container_width=True)
@@ -210,86 +231,3 @@ if st.session_state.data_container:
         * Sell Straddle or Strangle
         * Iron Condor
         """)
-nse = Nse()
-symbol_map = {
-    "NIFTY": "NIFTY 50",
-    "BANKNIFTY": "NIFTY BANK",
-    "SENSEX": "S&P BSE SENSEX"
-}
-
-selected_index = st.selectbox("Choose Index", list(symbol_map.keys()))
-symbol = symbol_map[selected_index]
-
-# --- Fetch Live Data ---
-def fetch_live_data(symbol):
-    try:
-        quote = nse.get_index_quote(symbol)
-        return {
-            "open": float(quote["open"]),
-            "high": float(quote["dayHigh"]),
-            "low": float(quote["dayLow"]),
-            "close": float(quote["lastPrice"]),
-            "volume": float(quote["quantityTraded"])
-        }
-    except Exception as e:
-        st.error(f"Error fetching data: {e}")
-        return None
-
-data = fetch_live_data(symbol)
-if not data:
-    st.stop()
-
-df = pd.DataFrame([data])
-st.subheader("📌 Latest Candle")
-st.dataframe(df)
-
-# --- Strategy Logic ---
-def detect_hammer_signal(latest, support, resistance):
-    open_price = latest['open']
-    high = latest['high']
-    low = latest['low']
-    close = latest['close']
-
-    body = abs(close - open_price)
-    candle_range = high - low
-    lower_wick = min(open_price, close) - low
-    upper_wick = high - max(open_price, close)
-
-    if candle_range == 0:
-        return "Sideways"
-
-    lower_wick_ratio = lower_wick / candle_range
-    upper_wick_ratio = upper_wick / candle_range
-    body_ratio = body / candle_range
-
-    is_hammer = (
-        lower_wick_ratio > 0.5 and
-        upper_wick_ratio < 0.2 and
-        body_ratio < 0.3
-    )
-
-    if is_hammer and close <= support * 1.02:
-        return "Buy CE"
-    elif is_hammer and close >= resistance * 0.98:
-        return "Buy PE"
-    else:
-        return "Sideways"
-
-# --- Support/Resistance Logic ---
-def detect_support_resistance(df):
-    support = df['low'].min()
-    resistance = df['high'].max()
-    return support, resistance
-
-support, resistance = detect_support_resistance(df)
-latest = df.iloc[-1]
-signal = detect_hammer_signal(latest, support, resistance)
-
-# --- Display Signal ---
-st.subheader("📍 Strategy Signal")
-st.markdown(f"### {signal}")
-
-with st.expander("Support/Resistance Levels"):
-    st.write(f"Support: `{support:.2f}`")
-    st.write(f"Resistance: `{resistance:.2f}`")
-    st.write(f"Close Price: `{latest['close']:.2f}`")
